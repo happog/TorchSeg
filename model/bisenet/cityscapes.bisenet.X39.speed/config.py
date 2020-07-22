@@ -50,10 +50,7 @@ def add_path(path):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-
-add_path(osp.join(C.root_dir, 'frunace'))
-
-from utils.pyt_utils import model_urls
+add_path(osp.join(C.root_dir, 'furnace'))
 
 """Image Config"""
 C.num_classes = 19
@@ -82,10 +79,10 @@ C.lr_power = 0.9
 C.momentum = 0.9
 C.weight_decay = 5e-4
 C.batch_size = 16 #4 * C.num_gpu
-C.epoches = 140
-C.epoch_num = 1000
+C.nepochs = 140
+C.niters_per_epoch = 1000
 C.num_workers = 24
-C.train_scale_array = [0.75, 1, 1.25, 1.5, 1.75, 2.0]
+C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
 
 """Eval Config"""
 C.eval_iter = 30

@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from engine.logger import get_logger
+from seg_opr.seg_oprs import one_hot
 
 logger = get_logger()
 
@@ -28,6 +29,7 @@ class SigmoidFocalLoss(nn.Module):
         target = mask * target
         onehot = target.view(b, -1, 1)
 
+        # TODO: use the pred instead of pred_sigmoid
         max_val = (-pred_sigmoid).clamp(min=0)
 
         pos_part = (1 - pred_sigmoid) ** self.gamma * (
@@ -53,9 +55,9 @@ class ProbOhemCrossEntropy2d(nn.Module):
         self.down_ratio = down_ratio
         if use_weight:
             weight = torch.FloatTensor(
-                [0.8373, 0.918, 0.866, 1.0345, 1.0166, 0.9969, 0.9754, 1.0489,
-                 0.8786, 1.0023, 0.9539, 0.9843, 1.1116, 0.9037, 1.0865, 1.0955,
-                 1.0865, 1.1529, 1.0507])
+                [1.4297, 1.4805, 1.4363, 3.365, 2.6635, 1.4311, 2.1943, 1.4817,
+                 1.4513, 2.1984, 1.5295, 1.6892, 3.2224, 1.4727, 7.5978, 9.4117,
+                 15.2588, 5.6818, 2.2067])
             self.criterion = torch.nn.CrossEntropyLoss(reduction=reduction,
                                                        weight=weight,
                                                        ignore_index=ignore_label)
@@ -81,7 +83,7 @@ class ProbOhemCrossEntropy2d(nn.Module):
                 target, torch.arange(len(target), dtype=torch.long)]
             threshold = self.thresh
             if self.min_kept > 0:
-                index = mask_prob.argsort()
+                _, index = torch.sort(mask_prob)
                 threshold_index = index[min(len(index), self.min_kept) - 1]
                 if mask_prob[threshold_index] > self.thresh:
                     threshold = mask_prob[threshold_index]

@@ -1,10 +1,12 @@
 import os
+import os.path as osp
 import cv2
 import numpy as np
 import time
 from tqdm import tqdm
 
 import torch
+import torch.nn.functional as F
 import torch.multiprocessing as mp
 
 from engine.logger import get_logger
@@ -95,31 +97,47 @@ class Evaluator(object):
         start_eval_time = time.perf_counter()
         nr_devices = len(self.devices)
         stride = int(np.ceil(self.ndata / nr_devices))
+        all_results = []
 
-        # start multi-process on multi-gpu
-        procs = []
+        # construct dataset shred
+        shred_list = []
         for d in range(nr_devices):
             e_record = min((d + 1) * stride, self.ndata)
-            shred_list = list(range(d * stride, e_record))
-            device = self.devices[d]
-            logger.info(
-                'GPU %s handle %d data.' % (device, len(shred_list)))
-            p = self.context.Process(target=self.worker,
-                                     args=(shred_list, device))
-            procs.append(p)
+            shred = list(range(d * stride, e_record))
+            shred_list.append(shred)
 
-        for p in procs:
-            p.start()
+        if nr_devices > 1:
+            # start multi-process on multi-gpu
+            procs = []
+            for d in range(nr_devices):
+                device = self.devices[d]
+                logger.info(
+                    'GPU %s handle %d data.' % (device, len(shred_list)))
+                p = self.context.Process(target=self.worker,
+                                         args=(shred_list[d], device))
+                procs.append(p)
 
-        all_results = []
-        for _ in tqdm(range(self.ndata)):
-            t = self.results_queue.get()
-            all_results.append(t)
-            if self.verbose:
-                self.compute_metric(all_results)
+            for p in procs:
+                p.start()
 
-        for p in procs:
-            p.join()
+            for _ in tqdm(range(self.ndata)):
+                t = self.results_queue.get()
+                all_results.append(t)
+                del t
+                if self.verbose:
+                    self.compute_metric(all_results)
+
+            for p in procs:
+                p.join()
+        else:
+            self.worker(shred_list[0], self.devices[0])
+
+            for _ in tqdm(range(self.ndata)):
+                t = self.results_queue.get()
+                all_results.append(t)
+                del t
+                if self.verbose:
+                    self.compute_metric(all_results)
 
         result_line = self.compute_metric(all_results)
         logger.info(
@@ -143,21 +161,24 @@ class Evaluator(object):
         raise NotImplementedError
 
     # evaluate the whole image at once
-    def whole_eval(self, img, output_size, device=None):
-        processed_pred = np.zeros(
-            (output_size[0], output_size[1], self.class_num))
+    def whole_eval(self, img, output_size, input_size=None, device=None):
+        if input_size is not None:
+            img, margin = self.process_image(img, input_size)
+        else:
+            img = self.process_image(img, input_size)
 
-        for s in self.multi_scales:
-            scaled_img = cv2.resize(img, None, fx=s, fy=s,
-                                    interpolation=cv2.INTER_LINEAR)
-            scaled_img = self.process_image(scaled_img, None)
-            pred = self.val_func_process(scaled_img, device)
-            pred = pred.permute(1, 2, 0)
-            processed_pred += cv2.resize(pred.cpu().numpy(),
-                                         (output_size[1], output_size[0]),
-                                         interpolation=cv2.INTER_LINEAR)
+        pred = self.val_func_process(img, device)
+        if input_size is not None:
+            pred = pred[:, margin[0]:(pred.shape[1] - margin[1]),
+                   margin[2]:(pred.shape[2] - margin[3])]
+        pred = pred.permute(1, 2, 0)
+        pred = pred.cpu().numpy()
+        if output_size is not None:
+            pred = cv2.resize(pred,
+                              (output_size[1], output_size[0]),
+                              interpolation=cv2.INTER_LINEAR)
 
-        pred = processed_pred.argmax(2)
+        pred = pred.argmax(2)
 
         return pred
 
@@ -234,7 +255,7 @@ class Evaluator(object):
     def val_func_process(self, input_data, device=None):
         input_data = np.ascontiguousarray(input_data[None, :, :, :],
                                           dtype=np.float32)
-        input_data = torch.FloatTensor(input_data).cuda(device)
+        input_data = torch.tensor(input_data, device=device)
 
         with torch.cuda.device(input_data.get_device()):
             self.val_func.eval()

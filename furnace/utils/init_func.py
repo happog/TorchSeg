@@ -11,7 +11,7 @@ import torch.nn as nn
 def __init_weight(feature, conv_init, norm_layer, bn_eps, bn_momentum,
                   **kwargs):
     for name, m in feature.named_modules():
-        if isinstance(m, (nn.Conv2d, nn.Conv3d)):
+        if isinstance(m, (nn.Conv2d, nn.Conv3d, nn.ConvTranspose2d)):
             conv_init(m.weight, **kwargs)
         elif isinstance(m, norm_layer):
             m.eps = bn_eps
@@ -31,7 +31,7 @@ def init_weight(module_list, conv_init, norm_layer, bn_eps, bn_momentum,
                       **kwargs)
 
 
-def group_weight(weight_group, module, norm_layer, lr):
+def group_weight(weight_group, module, norm_layer, lr, no_decay_lr=None):
     group_decay = []
     group_no_decay = []
     for m in module.modules():
@@ -39,18 +39,19 @@ def group_weight(weight_group, module, norm_layer, lr):
             group_decay.append(m.weight)
             if m.bias is not None:
                 group_no_decay.append(m.bias)
-        elif isinstance(m, (nn.Conv2d, nn.Conv3d)):
+        elif isinstance(m, (nn.Conv2d, nn.Conv3d, nn.ConvTranspose2d)):
             group_decay.append(m.weight)
             if m.bias is not None:
                 group_no_decay.append(m.bias)
-        elif isinstance(m, norm_layer) or isinstance(m, nn.GroupNorm):
+        elif isinstance(m, norm_layer) or isinstance(m, (
+        nn.GroupNorm, nn.InstanceNorm2d, nn.LayerNorm)):
             if m.weight is not None:
                 group_no_decay.append(m.weight)
             if m.bias is not None:
                 group_no_decay.append(m.bias)
-
     assert len(list(module.parameters())) == len(group_decay) + len(
         group_no_decay)
     weight_group.append(dict(params=group_decay, lr=lr))
+    lr = lr if no_decay_lr is None else no_decay_lr
     weight_group.append(dict(params=group_no_decay, weight_decay=.0, lr=lr))
     return weight_group
